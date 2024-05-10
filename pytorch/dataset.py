@@ -1,7 +1,6 @@
 from jaxrl_m.dataset import Dataset
 import dataclasses
 import numpy as np
-import jax
 import ml_collections
 
 @dataclasses.dataclass
