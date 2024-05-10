@@ -73,8 +73,8 @@ class GCDataset:
             batch['masks'] = (1.0 - success.astype(float))
         else:
             batch['masks'] = np.ones(batch_size)
-        batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx+self.curr_goal_shift], self.dataset['observations'])
-
+        #batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx+self.curr_goal_shift], self.dataset['observations'])
+        batch['goals'] = self.dataset['observations'][goal_indx+self.curr_goal_shift]
         return batch
 
 @dataclasses.dataclass
@@ -126,8 +126,9 @@ class GCSDataset(GCDataset):
         
         goal_indx = np.clip(goal_indx + self.curr_goal_shift, 0, self.dataset.size-1)
         desired_goal_indx = np.clip(desired_goal_indx + self.curr_goal_shift, 0, self.dataset.size-1)
-        batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
-        batch['desired_goals'] = jax.tree_map(lambda arr: arr[desired_goal_indx], self.dataset['observations'])
-
+        #batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
+        #batch['desired_goals'] = jax.tree_map(lambda arr: arr[desired_goal_indx], self.dataset['observations'])
+        batch['goals'] = self.dataset['observations'][goal_indx]
+        batch['desired_goals'] = self.dataset['observations'][desired_goal_indx]
         return batch
 
