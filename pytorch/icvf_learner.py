@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jaxrl_m.common import TrainState, target_update, nonpytree_field
+# from jaxrl_m.common import TrainState, target_update, nonpytree_field
 
 import flax
 import flax.linen as nn
@@ -12,8 +12,10 @@ import ml_collections
 from icecream import ic
 import functools
 
+import torch
+
 def expectile_loss(adv, diff, expectile=0.8):
-    weight = jnp.where(adv >= 0, expectile, (1 - expectile))
+    weight = torch.where(adv >= 0, expectile, (1 - expectile))
     return weight * diff ** 2
 
 
@@ -23,7 +25,7 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
     assert all([k in config for k in ['no_intent', 'min_q', 'expectile', 'discount']]), 'Missing ICVF config keys'
 
     if config['no_intent']:
-        batch['desired_goals'] = jax.tree_map(jnp.ones_like, batch['desired_goals'])
+        batch['desired_goals'] = torch.ones_like(batch['desired_goals'])
 
     ###
     # Compute TD error for outcome s_+
@@ -31,9 +33,8 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
     ###
 
     (next_v1_gz, next_v2_gz) = target_value_fn(batch['next_observations'], batch['goals'], batch['desired_goals'])
-    q1_gz = batch['rewards'] + config['discount'] * batch['masks'] * next_v1_gz
-    q2_gz = batch['rewards'] + config['discount'] * batch['masks'] * next_v2_gz
-    q1_gz, q2_gz = jax.lax.stop_gradient(q1_gz), jax.lax.stop_gradient(q2_gz)
+    q1_gz = (batch['rewards'] + config['discount'] * batch['masks'] * next_v1_gz).detach()
+    q2_gz = (batch['rewards'] + config['discount'] * batch['masks'] * next_v2_gz).detach()
 
     (v1_gz, v2_gz) = value_fn(batch['observations'], batch['goals'], batch['desired_goals'])
 
@@ -44,7 +45,7 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
 
     (next_v1_zz, next_v2_zz) = target_value_fn(batch['next_observations'], batch['desired_goals'], batch['desired_goals'])
     if config['min_q']:
-        next_v_zz = jnp.minimum(next_v1_zz, next_v2_zz)
+        next_v_zz = torch.min(next_v1_zz, next_v2_zz)
     else:
         next_v_zz = (next_v1_zz + next_v2_zz) / 2
     
@@ -55,7 +56,7 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
     adv = q_zz - v_zz
 
     if config['no_intent']:
-        adv = jnp.zeros_like(adv)
+        adv = torch.zeros_like(adv)
     
     ###
     #
@@ -99,14 +100,18 @@ def periodic_target_update(
     )
     return target_model.replace(params=new_target_params)
 
-class ICVFAgent(flax.struct.PyTreeNode):
-    rng: jax.random.PRNGKey
-    value: TrainState
-    target_value: TrainState
-    config: dict = nonpytree_field()
-        
-    @jax.jit
-    def update(agent, batch):
+def soft_update(target, source, tau):
+    for target_param, source_param in zip(target.parameters(), source.parameters()):
+            target_param.data.copy_((1 - tau) * target_param.data + tau * source_param.data)
+
+class ICVFAgent():
+    def __init__(self, value, target_value, config):
+        self.value = value
+        self.target_value = target_value
+        self.optimizer = torch.optim.AdamW(value.parameters(), lr=0.001)
+        self.config = config
+
+    def update(self, agent, batch):
         def value_loss_fn(value_params):
             value_fn = lambda s, g, z: agent.value(s, g, z, params=value_params)
             target_value_fn = lambda s, g, z: agent.target_value(s, g, z)
@@ -116,11 +121,16 @@ class ICVFAgent(flax.struct.PyTreeNode):
         if agent.config['periodic_target_update']:
             new_target_value = periodic_target_update(agent.value, agent.target_value, int(1.0 / agent.config['target_update_rate']))
         else:
-            new_target_value = target_update(agent.value, agent.target_value, agent.config['target_update_rate'])
-        new_value, value_info = agent.value.apply_loss_fn(loss_fn=value_loss_fn, has_aux=True)
+            new_target_value = soft_update(agent.value, agent.target_value, agent.config['target_update_rate'])
+        
+        icvf_loss = value_loss_fn(agent.value.parameters())
+        self.optimizer.zero_grad()
+        icvf_loss.backward()
+        self.optimizer.step()
 
         return agent.replace(value=new_value, target_value=new_target_value), value_info
-    
+        
+        
 def create_learner(
                  seed: int,
                  observations: jnp.ndarray,
