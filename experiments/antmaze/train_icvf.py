@@ -7,6 +7,8 @@ import jax.numpy as jnp
 import flax
 
 import tqdm
+import sys
+sys.path.append('/home/ysq/project/RL/icvf_pytorch')
 from src import icvf_learner as learner
 from src.icvf_networks import icvfs, create_icvf
 from icvf_envs.antmaze import d4rl_utils, d4rl_ant, ant_diagnostics, d4rl_pm

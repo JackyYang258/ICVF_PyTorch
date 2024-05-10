@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-# from jaxrl_m.common import TrainState, target_update, nonpytree_field
+from jaxrl_m.common import TrainState, target_update, nonpytree_field
 
 import flax
 import flax.linen as nn
@@ -149,22 +149,22 @@ def create_learner(
 
         print('Extra kwargs:', kwargs)
 
-        rng = jax.random.PRNGKey(seed)
+        torch.manual_seed(seed)
 
         _, value_params =  value_def.init(rng, observations, observations, observations).pop('params')
         value = TrainState.create(value_def, value_params, tx=optax.adam(**optim_kwargs))
         target_value = TrainState.create(value_def, value_params)
 
-        config = flax.core.FrozenDict(dict(
+        config = dict(
             discount=discount,
             target_update_rate=target_update_rate,
             expectile=expectile,
             no_intent=no_intent, 
             min_q=min_q,
             periodic_target_update=periodic_target_update,
-        ))
+        )
 
-        return ICVFAgent(rng=rng, value=value, target_value=target_value, config=config)
+        return ICVFAgent(value=value, target_value=target_value, config=config)
 
 
 def get_default_config():
