@@ -1,6 +1,7 @@
+
+# This is the pytorch version of ICVF, still working on it
 # ICVF (Reinforcement Learning from Passive Data via Latent Intentions)
 
-## This is the pytorch version of ICVF
 
 This repository contains accompanying code for the paper [Reinforcement Learning from Passive Data via Latent Intentions](https://arxiv.org/abs/2304.04782).
 
