@@ -47,14 +47,27 @@ def update_dict(d, additional):
 wandb_config = update_dict(
     default_wandb_config(),
     {
-        'project': 'icvf_antmaze',
+        'project': 'icvf',
         'group': 'icvf',
-        'name': '{icvf_type}_{env_name}',
+        # 'name': '{icvf_type}_{env_name}',
+        'name': 'antmaze-large-diverse-v2',
     }
 )
 
 config = update_dict(
     learner.get_default_config(),
+    # config = ml_collections.ConfigDict({
+    #     'optim_kwargs': {
+    #         'learning_rate': 0.00005,
+    #         'eps': 0.0003125
+    #     }, # LR for vision here. For FC, use standard 1e-3
+    #     'discount': 0.99,
+    #     'expectile': 0.9,  # The actual tau for expectiles.
+    #     'target_update_rate': 0.005,  # For soft target updates.
+    #     'no_intent': False,
+    #     'min_q': True,
+    #     'periodic_target_update': False,
+    # })
     {
     'discount': 0.99, 
      'optim_kwargs': { # Standard Adam parameters for non-vision
@@ -70,19 +83,23 @@ config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
+
+
+visual = True
+
 def main(_):
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
-
+    
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
     
     env = d4rl_utils.make_env(FLAGS.env_name)
     dataset = d4rl_utils.get_dataset(env)
+    #dataset: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
-
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
     value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
 
@@ -91,7 +108,8 @@ def main(_):
                     value_def,
                     **FLAGS.config)
 
-    visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
+    if(visual):
+        visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
 
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
@@ -105,7 +123,7 @@ def main(_):
             train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             wandb.log(train_metrics, step=i)
 
-        if i % FLAGS.eval_interval == 0:
+        if i % FLAGS.eval_interval == 0 and visual:
             visualizations = visualizer.generate_debug_plots(agent)
             eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
             wandb.log(eval_metrics, step=i)
@@ -120,7 +138,9 @@ def main(_):
             print(f'Saving to {fname}')
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
-
+    # we can use value_def.get_phi(observations) to get the latent state representation
+    
+    
 ###################################################################################################
 #
 # Creates wandb plots

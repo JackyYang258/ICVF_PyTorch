@@ -4,6 +4,7 @@ import numpy as np
 import jax
 import ml_collections
 
+import icecream as ic
 @dataclasses.dataclass
 class GCDataset:
     dataset: Dataset
@@ -100,7 +101,6 @@ class GCSDataset(GCDataset):
     def sample(self, batch_size: int, indx=None):
         if indx is None:
             indx = np.random.randint(self.dataset.size-1, size=batch_size)
-        
         batch = self.dataset.sample(batch_size, indx)
         if self.intent_sametraj:
             desired_goal_indx = self.sample_goals(indx, p_randomgoal=0.0, p_trajgoal=1.0 - self.p_currgoal, p_currgoal=self.p_currgoal)
@@ -109,7 +109,6 @@ class GCSDataset(GCDataset):
         
         goal_indx = self.sample_goals(indx)
         goal_indx = np.where(np.random.rand(batch_size) < self.p_samegoal, desired_goal_indx, goal_indx)
-
         success = (indx == goal_indx)
         desired_success = (indx == desired_goal_indx)
 
