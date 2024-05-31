@@ -6,6 +6,14 @@ import jax
 import jax.numpy as jnp
 import flax
 
+from pathlib import Path
+
+import gym
+import d4rl
+import numpy as np
+import torch
+from tqdm import trange
+
 import tqdm
 import sys
 sys.path.append('/home/ysq/project/RL/icvf_pytorch')
@@ -23,10 +31,14 @@ from ml_collections import config_flags
 import pickle
 from jaxrl_m.dataset import Dataset
 from icecream import ic
+from iql.src.iql import ImplicitQLearning
+from iql.src.policy import GaussianPolicy, DeterministicPolicy
+from iql.src.value_functions import TwinQ, ValueFunction
+from iql.src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 
@@ -34,8 +46,8 @@ flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
-flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
+flags.DEFINE_integer('batch_size', 2, 'Mini batch size.')
+flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -51,6 +63,7 @@ wandb_config = update_dict(
         'group': 'icvf',
         # 'name': '{icvf_type}_{env_name}',
         'name': 'antmaze-large-diverse-v2',
+        'mode': 'offline',
     }
 )
 
@@ -83,12 +96,28 @@ config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
-
-
 visual = True
+
+def get_env_and_dataset_for_downstream(log, env_name, max_episode_steps):
+    env = gym.make(env_name)
+    dataset = d4rl.qlearning_dataset(env)
+
+    if any(s in env_name for s in ('halfcheetah', 'hopper', 'walker2d')):
+        min_ret, max_ret = return_range(dataset, max_episode_steps)
+        log(f'Dataset returns have range [{min_ret}, {max_ret}]')
+        dataset['rewards'] /= (max_ret - min_ret)
+        dataset['rewards'] *= max_episode_steps
+    elif 'antmaze' in env_name:
+        dataset['rewards'] -= 1.
+
+    for k, v in dataset.items():
+        dataset[k] = torchify(v)
+
+    return env, dataset
 
 def main(_):
     # Create wandb logger
+    args = FLAGS.config
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
     
@@ -138,8 +167,53 @@ def main(_):
             print(f'Saving to {fname}')
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
-    # we can use value_def.get_phi(observations) to get the latent state representation
+    # we can use get_latent(agent, obs) to get the latent state representation
+    latent = get_latent(agent, obs)
     
+    torch.set_num_threads(1)
+    log = Log(Path(args.log_dir)/args.env_name, vars(args))
+    log(f'Log dir: {log.dir}')
+
+    env, dataset = get_env_and_dataset_for_downstream(log, args.env_name, args.max_episode_steps)
+    dataset['observations'] = np.mean(get_latent(agent, dataset['observations']),axis=0)
+    obs_dim = dataset['observations'].shape[1]
+    act_dim = dataset['actions'].shape[1]   # this assume continuous actions
+    set_seed(args.seed, env=env)
+
+    if args.deterministic_policy:
+        policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+    else:
+        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+    def eval_policy():
+        eval_returns = np.array([evaluate_policy(env, policy, args.max_episode_steps) \
+                                 for _ in range(args.n_eval_episodes)])
+        normalized_returns = d4rl.get_normalized_score(args.env_name, eval_returns) * 100.0
+        log.row({
+            'return mean': eval_returns.mean(),
+            'return std': eval_returns.std(),
+            'normalized return mean': normalized_returns.mean(),
+            'normalized return std': normalized_returns.std(),
+        })
+
+    iql = ImplicitQLearning(
+        qf=TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden),
+        vf=ValueFunction(obs_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden),
+        policy=policy,
+        optimizer_factory=lambda params: torch.optim.Adam(params, lr=args.learning_rate),
+        max_steps=args.n_steps,
+        tau=args.tau,
+        beta=args.beta,
+        alpha=args.alpha,
+        discount=args.discount
+    )
+
+    for step in trange(args.n_steps):
+        iql.update(**sample_batch(dataset, args.batch_size))
+        if (step+1) % args.eval_period == 0:
+            eval_policy()
+
+    torch.save(iql.state_dict(), log.dir/'final.pt')
+    log.close()
     
     
 ###################################################################################################
@@ -233,6 +307,11 @@ class DebugPlotGenerator:
 # Helper functions for visualization
 #
 ###################################################################################################
+@jax.jit
+def get_latent(agent, obs):
+    def get_phi(s):
+        return agent.value(s, method='get_phi')
+    return get_phi(obs)
 
 @jax.jit
 def get_values(agent, observations, intent):
@@ -269,13 +348,21 @@ def get_debug_statistics(agent, batch):
     s = batch['observations']
     g = batch['goals']
     z = batch['desired_goals']
+    
+    def get_latent(s):
+        return agent.value(s, method='get_phi')
+    print(s)
+    print(g)
+    print(z)
+    latent = get_latent(s)
 
     info_ssz = get_info(s, s, z)
     info_szz = get_info(s, z, z)
     info_sgz = get_info(s, g, z)
     info_sgg = get_info(s, g, g)
     info_szg = get_info(s, z, g)
-
+    print(info_szz['v'])
+    print(info_szz['v'].mean())
     if 'phi' in info_sgz:
         stats = {
             'phi_norm': jnp.linalg.norm(info_sgz['phi'], axis=-1).mean(),

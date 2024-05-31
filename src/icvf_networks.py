@@ -29,6 +29,7 @@ class ICVFWithEncoder(nn.Module):
     
     def get_phi(self, observations: jnp.ndarray) -> jnp.ndarray:
         latent = get_latent(self.encoder, observations)
+        print('Latent:', latent.shape)
         return self.vf.get_phi(latent)
 
     def __call__(self, observations, outcomes, intents):
