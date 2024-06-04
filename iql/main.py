@@ -6,10 +6,15 @@ import numpy as np
 import torch
 from tqdm import trange
 
-from src.iql import ImplicitQLearning
-from src.policy import GaussianPolicy, DeterministicPolicy
-from src.value_functions import TwinQ, ValueFunction
-from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+import sys
+sys.path.append('/home/ysq/project/RL/icvf_pytorch')
+
+from jaxrl_m.evaluation import EpisodeMonitor
+from iql.src.iql import ImplicitQLearning
+from iql.src.policy import GaussianPolicy, DeterministicPolicy
+from iql.src.value_functions import TwinQ, ValueFunction
+from iql.src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+
 
 
 def get_env_and_dataset(log, env_name, max_episode_steps):
@@ -79,8 +84,8 @@ def main(args):
 if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument('--env-name', required=True)
-    parser.add_argument('--log-dir', required=True)
+    parser.add_argument('--env-name', default='hopper-medium-v2')
+    parser.add_argument('--log-dir', default='logs')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--discount', type=float, default=0.99)
     parser.add_argument('--hidden-dim', type=int, default=256)

@@ -26,7 +26,7 @@ from icecream import ic
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 
@@ -35,7 +35,7 @@ flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -85,7 +85,7 @@ config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False
 
 
 
-visual = True
+visual = False
 
 def main(_):
     # Create wandb logger
@@ -139,8 +139,8 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
     # we can use value_def.get_phi(observations) to get the latent state representation
-    
-    
+    print(agent.value)
+    print(getattr(agent.value))
     
 ###################################################################################################
 #
