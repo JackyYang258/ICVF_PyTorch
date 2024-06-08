@@ -14,6 +14,8 @@ import numpy as np
 import torch
 from tqdm import trange
 
+import ml_collections
+
 import tqdm
 import sys
 sys.path.append('/home/ysq/project/RL/icvf_pytorch')
@@ -34,7 +36,7 @@ from icecream import ic
 from iql.src.iql import ImplicitQLearning
 from iql.src.policy import GaussianPolicy, DeterministicPolicy
 from iql.src.value_functions import TwinQ, ValueFunction
-from iql.src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+from iql.src.util import return_range, set_seed, Log, sample_batch, torchify
 
 
 FLAGS = flags.FLAGS
@@ -46,11 +48,47 @@ flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
-flags.DEFINE_integer('batch_size', 2, 'Mini batch size.')
+flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
+
+flags.DEFINE_string('log_directory', 'iql_logs', 'Logging dir.')
+# flags.DEFINE_integer('seed', 0, 'Random seed.')
+flags.DEFINE_float('discount', 0.99, 'Discount factor.')
+flags.DEFINE_integer('hidden_dim', 256, 'Hidden dimension size.')
+flags.DEFINE_integer('n_hidden', 2, 'Number of hidden layers.')
+flags.DEFINE_integer('n_steps', 10**6, 'Number of training steps.')
+# flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
+flags.DEFINE_float('learning_rate', 3e-4, 'Learning rate.')
+flags.DEFINE_float('alpha', 0.005, 'Alpha parameter.')
+flags.DEFINE_float('tau', 0.7, 'Tau parameter.')
+flags.DEFINE_float('beta', 3.0, 'Beta parameter.')
+# flags.DEFINE_boolean('deterministic_policy', False, 'Use deterministic policy.')
+flags.DEFINE_integer('deterministic_policy', 0, 'Use deterministic policy.')
+flags.DEFINE_integer('eval_period', 5000, 'Evaluation period.')
+flags.DEFINE_integer('n_eval_episodes', 10, 'Number of evaluation episodes.')
+flags.DEFINE_integer('max_episode_steps', 1000, 'Maximum steps per episode.')
+
+iql_config = ml_collections.ConfigDict({
+        'env_name': 'hopper-medium-v2',
+        'log_dir': 'logs',
+        'seed': 0,
+        'discount': 0.99,
+        'hidden_dim': 256,
+        'n_hidden': 2,
+        'n_steps': 10**6,
+        'batch_size': 256,
+        'learning_rate': 3e-4,
+        'alpha': 0.005,
+        'tau': 0.7,
+        'beta': 3.0,
+        'deterministic_policy': False,
+        'eval_period': 5000,
+        'n_eval_episodes': 10,
+        'max_episode_steps': 1000,
+    })
 
 def update_dict(d, additional):
     d.update(additional)
@@ -95,8 +133,9 @@ gcdataset_config = GCSDataset.get_default_config()
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
+config_flags.DEFINE_config_dict('iql', iql_config, lock_config=False)
 
-visual = True
+visual = False
 
 def get_env_and_dataset_for_downstream(log, env_name, max_episode_steps):
     env = gym.make(env_name)
@@ -111,13 +150,12 @@ def get_env_and_dataset_for_downstream(log, env_name, max_episode_steps):
         dataset['rewards'] -= 1.
 
     for k, v in dataset.items():
-        dataset[k] = torchify(v)
+        dataset[k] = torchify(v[:100])
 
     return env, dataset
 
 def main(_):
     # Create wandb logger
-    args = FLAGS.config
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
     
@@ -168,14 +206,20 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
     # we can use get_latent(agent, obs) to get the latent state representation
-    latent = get_latent(agent, obs)
     
+    args = FLAGS.iql
     torch.set_num_threads(1)
     log = Log(Path(args.log_dir)/args.env_name, vars(args))
     log(f'Log dir: {log.dir}')
 
     env, dataset = get_env_and_dataset_for_downstream(log, args.env_name, args.max_episode_steps)
-    dataset['observations'] = np.mean(get_latent(agent, dataset['observations']),axis=0)
+    print(dataset['observations'].shape)
+    obs = get_latent(agent, jnp.array(np.array(dataset['observations'].cpu())))
+    dataset['observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
+    obs = get_latent(agent, jnp.array(np.array(dataset['next_observations'].cpu())))
+    dataset['next_observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
+    print(dataset['next_observations'].shape)
+    print(dataset['observations'].device)
     obs_dim = dataset['observations'].shape[1]
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
     set_seed(args.seed, env=env)
@@ -206,7 +250,21 @@ def main(_):
         alpha=args.alpha,
         discount=args.discount
     )
-
+    def evaluate_policy(env, policy, max_episode_steps, deterministic=True):
+        obs = env.reset()
+        total_reward = 0.
+        for _ in range(max_episode_steps):
+            with torch.no_grad():
+                action = policy.act(
+                    torch.mean(torch.tensor(np.array(get_latent(agent,jnp.array(obs)))).to('cuda:0'),dim=0),
+                    deterministic=deterministic).cpu().numpy()
+            next_obs, reward, done, info = env.step(action)
+            total_reward += reward
+            if done:
+                break
+            else:
+                obs = next_obs
+        return total_reward
     for step in trange(args.n_steps):
         iql.update(**sample_batch(dataset, args.batch_size))
         if (step+1) % args.eval_period == 0:
