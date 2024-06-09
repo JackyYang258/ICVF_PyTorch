@@ -9,7 +9,6 @@ from tqdm import trange
 import sys
 sys.path.append('/home/ysq/project/RL/icvf_pytorch')
 
-from jaxrl_m.evaluation import EpisodeMonitor
 from iql.src.iql import ImplicitQLearning
 from iql.src.policy import GaussianPolicy, DeterministicPolicy
 from iql.src.value_functions import TwinQ, ValueFunction
@@ -30,7 +29,7 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
         dataset['rewards'] -= 1.
 
     for k, v in dataset.items():
-        dataset[k] = torchify(v)
+        dataset[k] = torchify(v[:200000])
 
     return env, dataset
 

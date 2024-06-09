@@ -38,7 +38,7 @@ from iql.src.policy import GaussianPolicy, DeterministicPolicy
 from iql.src.value_functions import TwinQ, ValueFunction
 from iql.src.util import return_range, set_seed, Log, sample_batch, torchify
 
-
+USINGICVF = True
 FLAGS = flags.FLAGS
 flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
 
@@ -100,8 +100,8 @@ wandb_config = update_dict(
         'project': 'icvf',
         'group': 'icvf',
         # 'name': '{icvf_type}_{env_name}',
-        'name': 'antmaze-large-diverse-v2',
-        'mode': 'offline',
+        'name': 'iql_without_icvf',
+        'mode': 'online',
     }
 )
 
@@ -150,7 +150,7 @@ def get_env_and_dataset_for_downstream(log, env_name, max_episode_steps):
         dataset['rewards'] -= 1.
 
     for k, v in dataset.items():
-        dataset[k] = torchify(v[:100])
+        dataset[k] = torchify(v[:200000])
 
     return env, dataset
 
@@ -178,33 +178,34 @@ def main(_):
     if(visual):
         visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
 
-    for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
-                       smoothing=0.1,
-                       dynamic_ncols=True):
-        batch = gc_dataset.sample(FLAGS.batch_size)  
-        agent, update_info = agent.update(batch)
+    if USINGICVF:
+        for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
+                        smoothing=0.1,
+                        dynamic_ncols=True):
+            batch = gc_dataset.sample(FLAGS.batch_size)  
+            agent, update_info = agent.update(batch)
 
-        if i % FLAGS.log_interval == 0:
-            debug_statistics = get_debug_statistics(agent, batch)
-            train_metrics = {f'training/{k}': v for k, v in update_info.items()}
-            train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
-            wandb.log(train_metrics, step=i)
+            if i % FLAGS.log_interval == 0:
+                debug_statistics = get_debug_statistics(agent, batch)
+                train_metrics = {f'training/{k}': v for k, v in update_info.items()}
+                train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
+                wandb.log(train_metrics, step=i)
 
-        if i % FLAGS.eval_interval == 0 and visual:
-            visualizations = visualizer.generate_debug_plots(agent)
-            eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
-            wandb.log(eval_metrics, step=i)
+            if i % FLAGS.eval_interval == 0 and visual:
+                visualizations = visualizer.generate_debug_plots(agent)
+                eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
+                wandb.log(eval_metrics, step=i)
 
-        if i % FLAGS.save_interval == 0:
-            save_dict = dict(
-                agent=flax.serialization.to_state_dict(agent),
-                config=FLAGS.config.to_dict()
-            )
+            if i % FLAGS.save_interval == 0:
+                save_dict = dict(
+                    agent=flax.serialization.to_state_dict(agent),
+                    config=FLAGS.config.to_dict()
+                )
 
-            fname = os.path.join(FLAGS.save_dir, f'params.pkl')
-            print(f'Saving to {fname}')
-            with open(fname, "wb") as f:
-                pickle.dump(save_dict, f)
+                fname = os.path.join(FLAGS.save_dir, f'params.pkl')
+                print(f'Saving to {fname}')
+                with open(fname, "wb") as f:
+                    pickle.dump(save_dict, f)
     # we can use get_latent(agent, obs) to get the latent state representation
     
     args = FLAGS.iql
@@ -213,13 +214,14 @@ def main(_):
     log(f'Log dir: {log.dir}')
 
     env, dataset = get_env_and_dataset_for_downstream(log, args.env_name, args.max_episode_steps)
-    print(dataset['observations'].shape)
-    obs = get_latent(agent, jnp.array(np.array(dataset['observations'].cpu())))
-    dataset['observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
-    obs = get_latent(agent, jnp.array(np.array(dataset['next_observations'].cpu())))
-    dataset['next_observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
-    print(dataset['next_observations'].shape)
-    print(dataset['observations'].device)
+    if USINGICVF:
+        print(dataset['observations'].shape)
+        obs = get_latent(agent, jnp.array(np.array(dataset['observations'].cpu())))
+        dataset['observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
+        obs = get_latent(agent, jnp.array(np.array(dataset['next_observations'].cpu())))
+        dataset['next_observations'] = torch.mean(torch.tensor(np.array(obs)).to('cuda:0'),dim=0)
+        print(dataset['next_observations'].shape)
+        print(dataset['observations'].device)
     obs_dim = dataset['observations'].shape[1]
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
     set_seed(args.seed, env=env)
@@ -238,6 +240,7 @@ def main(_):
             'normalized return mean': normalized_returns.mean(),
             'normalized return std': normalized_returns.std(),
         })
+        return eval_returns.mean(), eval_returns.std(), normalized_returns.mean(), normalized_returns.std()
 
     iql = ImplicitQLearning(
         qf=TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden),
@@ -255,9 +258,12 @@ def main(_):
         total_reward = 0.
         for _ in range(max_episode_steps):
             with torch.no_grad():
-                action = policy.act(
-                    torch.mean(torch.tensor(np.array(get_latent(agent,jnp.array(obs)))).to('cuda:0'),dim=0),
-                    deterministic=deterministic).cpu().numpy()
+                if USINGICVF:
+                    action = policy.act(
+                        torch.mean(torch.tensor(np.array(get_latent(agent,jnp.array(obs)))).to('cuda:0'),dim=0),
+                        deterministic=deterministic).cpu().numpy()
+                else:
+                    action = policy.act(torchify(obs), deterministic=deterministic).cpu().numpy()
             next_obs, reward, done, info = env.step(action)
             total_reward += reward
             if done:
@@ -265,10 +271,16 @@ def main(_):
             else:
                 obs = next_obs
         return total_reward
+
     for step in trange(args.n_steps):
         iql.update(**sample_batch(dataset, args.batch_size))
         if (step+1) % args.eval_period == 0:
-            eval_policy()
+            mean_reward, return_std, norm_mean_reward, norm_return_std = eval_policy()
+            wandb.log({"iql/mean_reward_iql":mean_reward}, step=step)
+            wandb.log({"iql/return_std_iql":return_std}, step=step)
+            wandb.log({"iql/norm_mean_reward_iql":norm_mean_reward}, step=step)
+            wandb.log({"iql/norm_return_std_iql":norm_return_std}, step=step)
+            
 
     torch.save(iql.state_dict(), log.dir/'final.pt')
     log.close()
