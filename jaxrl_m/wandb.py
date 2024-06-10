@@ -129,6 +129,7 @@ def setup_wandb(
         ),
         mode="offline" if offline else "online",
         save_code=True,
+        reinit=True,
     )
 
     init_kwargs.update(additional_init_kwargs)

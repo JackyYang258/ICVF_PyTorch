@@ -49,7 +49,7 @@ flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(5e5), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -100,7 +100,7 @@ wandb_config = update_dict(
         'project': 'icvf',
         'group': 'icvf',
         # 'name': '{icvf_type}_{env_name}',
-        'name': 'iql_without_icvf',
+        'name': 'iql_with_icvf',
         'mode': 'online',
     }
 )
@@ -207,6 +207,9 @@ def main(_):
                 with open(fname, "wb") as f:
                     pickle.dump(save_dict, f)
     # we can use get_latent(agent, obs) to get the latent state representation
+    
+    wandb.finish()
+    setup_wandb(params_dict, **FLAGS.wandb)
     
     args = FLAGS.iql
     torch.set_num_threads(1)
@@ -483,4 +486,3 @@ def get_traj_v(agent, trajectory):
 
 if __name__ == '__main__':
     app.run(main)
-
