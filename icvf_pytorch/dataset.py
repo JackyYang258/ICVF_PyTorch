@@ -1,10 +1,8 @@
 import torch
-from jaxrl_m.dataset import Dataset
+from py_utils.dataset import Dataset
 import dataclasses
 import numpy as np
 import ml_collections
-
-import icecream as ic
 
 @dataclasses.dataclass
 class GCDataset:
@@ -133,11 +131,7 @@ class GCSDataset(GCDataset):
         goal_indx = torch.tensor(goal_indx + self.curr_goal_shift)
         desired_goal_indx = torch.tensor(desired_goal_indx + self.curr_goal_shift)
         
-        batch['goals'] = {
-            key: value[goal_indx] for key, value in self.dataset['observations'].items()
-        }
-        batch['desired_goals'] = {
-            key: value[desired_goal_indx] for key, value in self.dataset['observations'].items()
-        }
+        batch['goals'] = self.dataset['observations'][goal_indx]
+        batch['desired_goals'] = self.dataset['observations'][desired_goal_indx]
 
         return batch

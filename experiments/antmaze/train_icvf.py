@@ -8,7 +8,7 @@ import flax
 
 import tqdm
 import sys
-sys.path.append('/home/ysq/project/RL/icvf_pytorch')
+sys.path.append('/scratch/bdaw/kaiyan289/icvf_pytorch')
 from src import icvf_learner as learner
 from src.icvf_networks import icvfs, create_icvf
 from icvf_envs.antmaze import d4rl_utils, d4rl_ant, ant_diagnostics, d4rl_pm
@@ -22,7 +22,6 @@ from jaxrl_m.evaluation import supply_rng, evaluate, evaluate_with_trajectories
 from ml_collections import config_flags
 import pickle
 from jaxrl_m.dataset import Dataset
-from icecream import ic
 
 
 FLAGS = flags.FLAGS
@@ -138,9 +137,7 @@ def main(_):
             print(f'Saving to {fname}')
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
-    # we can use value_def.get_phi(observations) to get the latent state representation
-    print(agent.value)
-    print(getattr(agent.value))
+
     
 ###################################################################################################
 #
