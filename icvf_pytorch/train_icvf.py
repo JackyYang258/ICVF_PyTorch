@@ -14,6 +14,8 @@ from src.icvf_networks import icvfs, create_icvf
 from icvf_envs.antmaze import d4rl_utils, d4rl_ant, ant_diagnostics, d4rl_pm
 from src.gc_dataset import GCSDataset
 from src import viz_utils
+from icvf_pytorch.utils import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+from .icvf_agent import ICVFAgent, create_agent
 
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 import wandb
@@ -83,8 +85,6 @@ config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
-
-
 visual = False
 
 def main(_):
@@ -98,15 +98,15 @@ def main(_):
     env = d4rl_utils.make_env(FLAGS.env_name)
     dataset = d4rl_utils.get_dataset(env)
     #dataset: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
+    set_seed(FLAGS.seed, env=env)
+    
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
+    
     value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
 
-    agent = learner.create_learner(FLAGS.seed,
-                    example_batch['observations'],
-                    value_def,
-                    **FLAGS.config)
+    agent = create_agent(FLAGS.seed, value_def, FLAGS.config.to_dict())
 
     if(visual):
         visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
@@ -114,8 +114,8 @@ def main(_):
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
                        dynamic_ncols=True):
-        batch = gc_dataset.sample(FLAGS.batch_size)  
-        agent, update_info = agent.update(batch)
+        batch = gc_dataset.sample(FLAGS.batch_size)
+        update_info = agent.update(batch)
 
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, batch)
@@ -138,9 +138,6 @@ def main(_):
             print(f'Saving to {fname}')
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)
-    # we can use value_def.get_phi(observations) to get the latent state representation
-    print(agent.value)
-    print(getattr(agent.value))
     
 ###################################################################################################
 #
@@ -258,13 +255,13 @@ def get_policy(agent, observations, intent):
     policy = grads[:, :2]
     return policy / jnp.linalg.norm(policy, axis=-1, keepdims=True)
 
-@jax.jit
 def get_debug_statistics(agent, batch):
+    value_fn = agent.value
     def get_info(s, g, z):
         if agent.config['no_intent']:
-            return agent.value(s, g, jnp.ones_like(z), method='get_info')
+            return value_fn(s, g, jnp.ones_like(z), method='get_info')
         else:
-            return agent.value(s, g, z, method='get_info')
+            return value_fn(s, g, z, method='get_info')
 
     s = batch['observations']
     g = batch['goals']
@@ -278,8 +275,8 @@ def get_debug_statistics(agent, batch):
 
     if 'phi' in info_sgz:
         stats = {
-            'phi_norm': jnp.linalg.norm(info_sgz['phi'], axis=-1).mean(),
-            'psi_norm': jnp.linalg.norm(info_sgz['psi'], axis=-1).mean(),
+            'phi_norm': np.linalg.norm(info_sgz['phi'], axis=-1).mean(),
+            'psi_norm': np.linalg.norm(info_sgz['psi'], axis=-1).mean(),
         }
     else:
         stats = {}
