@@ -1,31 +1,18 @@
 import os
 from absl import app, flags
-from functools import partial
 import numpy as np
-import jax
-import jax.numpy as jnp
-import flax
-
-import tqdm
-import sys
-sys.path.append('/home/ysq/project/RL/icvf_pytorch')
-from src import icvf_learner as learner
-from src.icvf_networks import icvfs, create_icvf
-from icvf_envs.antmaze import d4rl_utils, d4rl_ant, ant_diagnostics, d4rl_pm
-from src.gc_dataset import GCSDataset
-from src import viz_utils
-from icvf_pytorch.utils import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
-from .icvf_agent import ICVFAgent, create_agent
-
-from jaxrl_m.wandb import setup_wandb, default_wandb_config
-import wandb
-from jaxrl_m.evaluation import supply_rng, evaluate, evaluate_with_trajectories
-
 from ml_collections import config_flags
-import pickle
-from jaxrl_m.dataset import Dataset
+import ml_collections
 from icecream import ic
 
+import tqdm
+from .wandb import setup_wandb, default_wandb_config
+import wandb
+
+from .utils import create_icvf, set_seed
+from .d4rl import make_env, get_dataset
+from .dataset import Dataset
+from .icvf_agent import create_agent
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
@@ -38,8 +25,6 @@ flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
-
-flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
 
 def update_dict(d, additional):
@@ -57,19 +42,18 @@ wandb_config = update_dict(
 )
 
 config = update_dict(
-    learner.get_default_config(),
-    # config = ml_collections.ConfigDict({
-    #     'optim_kwargs': {
-    #         'learning_rate': 0.00005,
-    #         'eps': 0.0003125
-    #     }, # LR for vision here. For FC, use standard 1e-3
-    #     'discount': 0.99,
-    #     'expectile': 0.9,  # The actual tau for expectiles.
-    #     'target_update_rate': 0.005,  # For soft target updates.
-    #     'no_intent': False,
-    #     'min_q': True,
-    #     'periodic_target_update': False,
-    # })
+    ml_collections.ConfigDict({
+        'optim_kwargs': {
+            'learning_rate': 0.00005,
+            'eps': 0.0003125
+        }, # LR for vision here. For FC, use standard 1e-3
+        'discount': 0.99,
+        'expectile': 0.9,  # The actual tau for expectiles.
+        'target_update_rate': 0.005,  # For soft target updates.
+        'no_intent': False,
+        'min_q': True,
+        'periodic_target_update': False,
+    }),
     {
     'discount': 0.99, 
      'optim_kwargs': { # Standard Adam parameters for non-vision
@@ -79,13 +63,11 @@ config = update_dict(
     }
 )
 
-gcdataset_config = GCSDataset.get_default_config()
+gcdataset_config = Dataset.get_default_config()
 
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
-
-visual = False
 
 def main(_):
     # Create wandb logger
@@ -95,21 +77,18 @@ def main(_):
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
     
-    env = d4rl_utils.make_env(FLAGS.env_name)
-    dataset = d4rl_utils.get_dataset(env)
+    env = make_env(FLAGS.env_name)
+    dataset = get_dataset(env)
     #dataset: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
     set_seed(FLAGS.seed, env=env)
     
-    gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
+    gc_dataset = Dataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
-    
+
     value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
 
     agent = create_agent(FLAGS.seed, value_def, FLAGS.config.to_dict())
-
-    if(visual):
-        visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
 
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
@@ -123,107 +102,18 @@ def main(_):
             train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             wandb.log(train_metrics, step=i)
 
-        if i % FLAGS.eval_interval == 0 and visual:
-            visualizations = visualizer.generate_debug_plots(agent)
-            eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
-            wandb.log(eval_metrics, step=i)
-
         if i % FLAGS.save_interval == 0:
-            save_dict = dict(
-                agent=flax.serialization.to_state_dict(agent),
-                config=FLAGS.config.to_dict()
-            )
-
-            fname = os.path.join(FLAGS.save_dir, f'params.pkl')
-            print(f'Saving to {fname}')
-            with open(fname, "wb") as f:
-                pickle.dump(save_dict, f)
-    
-###################################################################################################
-#
-# Creates wandb plots
-#
-###################################################################################################
-class DebugPlotGenerator:
-    def __init__(self, env_name, gc_dataset):
-        if 'antmaze' in env_name:
-            viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
-            init_state = np.copy(viz_dataset['observations'][0])
-            init_state[:2] = (12.5, 8)
-            viz_library = d4rl_ant
-            self.viz_things = (viz_env, viz_dataset, viz_library, init_state)
-
-        elif 'maze' in env_name:
-            viz_env, viz_dataset = d4rl_pm.get_gcenv_and_dataset(env_name)
-            init_state = np.copy(viz_dataset['observations'][0])
-            init_state[:2] = (3, 4)
-            viz_library = d4rl_pm
-            self.viz_things = (viz_env, viz_dataset, viz_library, init_state)
-        else:
-            raise NotImplementedError('Visualization not implemented for this environment')
-
-        # intent_set_indx = np.random.default_rng(0).choice(dataset.size, FLAGS.config.n_intents, replace=False)
-        # Chosen by hand for `antmaze-large-diverse-v2` to get a nice spread of goals, use the above line for random selection
-
-        intent_set_indx = np.array([184588, 62200, 162996, 110214, 4086, 191369, 92549, 12946, 192021])
-        self.intent_set_batch = gc_dataset.sample(9, indx=intent_set_indx)
-        self.example_trajectory = gc_dataset.sample(50, indx=np.arange(1000, 1050))
-
-
-
-    def generate_debug_plots(self, agent):
-        example_trajectory = self.example_trajectory
-        intents = self.intent_set_batch['observations']
-        (viz_env, viz_dataset, viz_library, init_state) = self.viz_things
-
-        visualizations = {}
-        traj_metrics = get_traj_v(agent, example_trajectory)
-        value_viz = viz_utils.make_visual_no_image(traj_metrics, 
-            [
-            partial(viz_utils.visualize_metric, metric_name=k) for k in traj_metrics.keys()
-                ]
-        )
-        visualizations['value_traj_viz'] = wandb.Image(value_viz)
-
-        if 'maze' in FLAGS.env_name:
-            print('Visualizing intent policies and values')
-            # Policy visualization
-            methods = [
-                partial(viz_library.plot_policy, policy_fn=partial(get_policy, agent, intent=intents[idx]))
-                for idx in range(9)
-            ]
-            image = viz_library.make_visual(viz_env, viz_dataset, methods)
-            visualizations['intent_policies'] = wandb.Image(image)
-
-            # Value visualization
-            methods = [
-                partial(viz_library.plot_value, value_fn=partial(get_values, agent, intent=intents[idx]))
-                for idx in range(9)
-            ]
-            image = viz_library.make_visual(viz_env, viz_dataset, methods)
-            visualizations['intent_values'] = wandb.Image(image)
-
-            for idx in range(3):
-                methods = [
-                    partial(viz_library.plot_policy, policy_fn=partial(get_policy, agent, intent=intents[idx])),
-                    partial(viz_library.plot_value, value_fn=partial(get_values, agent, intent=intents[idx]))
-                ]
-                image = viz_library.make_visual(viz_env, viz_dataset, methods)
-                visualizations[f'intent{idx}'] = wandb.Image(image)
-
-            image_zz = viz_library.gcvalue_image(
-                viz_env,
-                viz_dataset,
-                partial(get_v_zz, agent),
-            )
-            image_gz = viz_library.gcvalue_image(
-                viz_env,
-                viz_dataset,
-                partial(get_v_gz, agent, init_state),
-            )
-            visualizations['v_zz'] = wandb.Image(image_zz)
-            visualizations['v_gz'] = wandb.Image(image_gz)
-        return visualizations
+            pass
+            # save the model
+            
+            # save_dict = dict(
+            #     agent=flax.serialization.to_state_dict(agent),
+            #     config=FLAGS.config.to_dict()
+            # )
+            # fname = os.path.join(FLAGS.save_dir, f'params.pkl')
+            # print(f'Saving to {fname}')
+            # with open(fname, "wb") as f:
+            #     pickle.dump(save_dict, f)
 
 ###################################################################################################
 #
@@ -231,37 +121,13 @@ class DebugPlotGenerator:
 #
 ###################################################################################################
 
-@jax.jit
-def get_values(agent, observations, intent):
-    def get_v(observations, intent):
-        intent = intent.reshape(1, -1)
-        intent_tiled = jnp.tile(intent, (observations.shape[0], 1))
-        v1, v2 = agent.value(observations, intent_tiled, intent_tiled)
-        return (v1 + v2) / 2    
-    return get_v(observations, intent)
-
-@jax.jit
-def get_policy(agent, observations, intent):
-    def v(observations):
-        def get_v(observations, intent):
-            intent = intent.reshape(1, -1)
-            intent_tiled = jnp.tile(intent, (observations.shape[0], 1))
-            v1, v2 = agent.value(observations, intent_tiled, intent_tiled)
-            return (v1 + v2) / 2    
-            
-        return get_v(observations, intent).mean()
-
-    grads = jax.grad(v)(observations)
-    policy = grads[:, :2]
-    return policy / jnp.linalg.norm(policy, axis=-1, keepdims=True)
-
 def get_debug_statistics(agent, batch):
-    value_fn = agent.value
+    value_fn = agent.value_fn
     def get_info(s, g, z):
         if agent.config['no_intent']:
-            return value_fn(s, g, jnp.ones_like(z), method='get_info')
+            return value_fn.get_info(s, g, np.ones_like(z))
         else:
-            return value_fn(s, g, z, method='get_info')
+            return value_fn.get_info(s, g, z)
 
     s = batch['observations']
     g = batch['goals']
@@ -291,35 +157,6 @@ def get_debug_statistics(agent, batch):
         'diff_sgg_sgz': (info_sgg['v'] - info_sgz['v']).mean(),
     })
     return stats
-
-@jax.jit
-def get_gcvalue(agent, s, g, z):
-    v_sgz_1, v_sgz_2 = agent.value(s, g, z)
-    return (v_sgz_1 + v_sgz_2) / 2
-
-def get_v_zz(agent, goal, observations):
-    goal = jnp.tile(goal, (observations.shape[0], 1))
-    return get_gcvalue(agent, observations, goal, goal)
-
-def get_v_gz(agent, initial_state, target_goal, observations):
-    initial_state = jnp.tile(initial_state, (observations.shape[0], 1))
-    target_goal = jnp.tile(target_goal, (observations.shape[0], 1))
-    return get_gcvalue(agent, initial_state, observations, target_goal)
-
-@jax.jit
-def get_traj_v(agent, trajectory):
-    def get_v(s, g):
-        return agent.value(s[None], g[None], g[None]).mean()
-    observations = trajectory['observations']
-    all_values = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(0, None))(observations, observations)
-    return {
-        'dist_to_beginning': all_values[:, 0],
-        'dist_to_end': all_values[:, -1],
-        'dist_to_middle': all_values[:, all_values.shape[1] // 2],
-    }
-
-####################
-
 
 if __name__ == '__main__':
     app.run(main)

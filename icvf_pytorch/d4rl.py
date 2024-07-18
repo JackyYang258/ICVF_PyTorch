@@ -1,7 +1,7 @@
 import d4rl
 import gym
 import numpy as np
-from py_utils.dataset import Dataset
+from .dataset import Dataset
 
 import time
 
