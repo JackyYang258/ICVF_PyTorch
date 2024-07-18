@@ -2,11 +2,10 @@ import os
 from absl import app, flags
 import numpy as np
 from ml_collections import config_flags
-import ml_collections
 from icecream import ic
 
 import tqdm
-from .wandb import setup_wandb, default_wandb_config
+from .wandb import setup_wandb
 import wandb
 
 from .utils import create_icvf, set_seed
@@ -16,9 +15,7 @@ from .icvf_agent import create_agent
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
-
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
-
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
@@ -27,44 +24,7 @@ flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
 
-def update_dict(d, additional):
-    d.update(additional)
-    return d
-
-wandb_config = update_dict(
-    default_wandb_config(),
-    {
-        'project': 'icvf',
-        'group': 'icvf',
-        # 'name': '{icvf_type}_{env_name}',
-        'name': 'antmaze-large-diverse-v2',
-    }
-)
-
-config = update_dict(
-    ml_collections.ConfigDict({
-        'optim_kwargs': {
-            'learning_rate': 0.00005,
-            'eps': 0.0003125
-        }, # LR for vision here. For FC, use standard 1e-3
-        'discount': 0.99,
-        'expectile': 0.9,  # The actual tau for expectiles.
-        'target_update_rate': 0.005,  # For soft target updates.
-        'no_intent': False,
-        'min_q': True,
-        'periodic_target_update': False,
-    }),
-    {
-    'discount': 0.99, 
-     'optim_kwargs': { # Standard Adam parameters for non-vision
-            'learning_rate': 3e-4,
-            'eps': 1e-8
-        }
-    }
-)
-
-gcdataset_config = Dataset.get_default_config()
-
+from .config import wandb_config, config, gcdataset_config
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)

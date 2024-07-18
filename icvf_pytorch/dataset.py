@@ -77,18 +77,3 @@ class Dataset(FrozenDict):
     def get_subset(self, indx):
         subset = {key: value[indx] for key, value in self._data.items()}
         return subset
-
-    @staticmethod
-    def get_default_config():
-        return ml_collections.ConfigDict({
-            'p_randomgoal': 0.3,
-            'p_trajgoal': 0.5,
-            'p_currgoal': 0.2,
-            'reward_scale': 1.0,
-            'reward_shift': -1.0,
-            'terminal': True,
-            'p_samegoal': 0.5,
-            'intent_sametraj': False,
-            'max_distance': ml_collections.config_dict.placeholder(int),
-            'curr_goal_shift': 0,
-        })
