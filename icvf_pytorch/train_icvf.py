@@ -5,13 +5,14 @@ from ml_collections import config_flags
 from icecream import ic
 
 import tqdm
-from .wandb import setup_wandb
 import wandb
 
-from .utils import create_icvf, set_seed
+from .network import MultilinearVF
+from .utils import set_seed
 from .d4rl import make_env, get_dataset
 from .dataset import Dataset
 from .icvf_agent import create_agent
+from .wandb import setup_wandb
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
@@ -43,12 +44,11 @@ def main(_):
     set_seed(FLAGS.seed, env=env)
     
     gc_dataset = Dataset(dataset, **FLAGS.gcdataset.to_dict())
-    example_batch = gc_dataset.sample(1)
-    hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
-
-    value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
-
-    agent = create_agent(FLAGS.seed, value_def, FLAGS.config.to_dict())
+    input_dim = gc_dataset.observations.shape[1:]
+    hidden_dims = [int(h) for h in FLAGS.hidden_dims]
+    
+    value_net = MultilinearVF(input_dim, hidden_dims=hidden_dims)
+    agent = create_agent(FLAGS.seed, value_net, FLAGS.config.to_dict())
 
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
