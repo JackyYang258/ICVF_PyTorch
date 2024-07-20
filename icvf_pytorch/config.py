@@ -29,8 +29,8 @@ wandb_config = default_wandb_config().update(
 
 config = ml_collections.ConfigDict({
         'optim_kwargs': {
-            'learning_rate': 0.00005,
-            'eps': 0.0003125
+            'learning_rate': 3e-4,
+            'eps': 1e-8
         }, # LR for vision here. For FC, use standard 1e-3
         'discount': 0.99,
         'expectile': 0.9,  # The actual tau for expectiles.
@@ -38,13 +38,6 @@ config = ml_collections.ConfigDict({
         'no_intent': False,
         'min_q': True,
         'periodic_target_update': False,
-    }).update(
-    {
-    'discount': 0.99, 
-    'optim_kwargs': { # Standard Adam parameters for non-vision
-            'learning_rate': 3e-4,
-            'eps': 1e-8
-        }
     })
     
 gcdataset_config = ml_collections.ConfigDict({

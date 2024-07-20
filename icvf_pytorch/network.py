@@ -8,7 +8,7 @@ class LayerNormMLP(nn.Module):
         layers = []
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i+1]))
-            if i + 1 < len(dims) or activate_final:
+            if i + 2 < len(dims) or activate_final:
                 layers.append(activation())
                 layers.append(nn.LayerNorm(dims[i+1]))
         self.net = nn.Sequential(*layers)

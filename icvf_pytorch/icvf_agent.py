@@ -1,21 +1,22 @@
-import copy
+from copy import deepcopy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ICVFAgent(nn.Module):
-    def __init__(self, value_fn, target_value_fn, optimizer_factory, config):
+    def __init__(self, value_fn, optimizer_factory, config):
         super().__init__()
-        self.value_fn = value_fn.to(DEFAULT_DEVICE)
-        self.target_value_fn = copy.deepcopy(target_value_fn).requires_grad_(False).to(DEFAULT_DEVICE)
+        self.value_fn = value_fn.to(device)
+        self.target_value_fn = deepcopy(value_fn).requires_grad_(False).to(device)
         self.config = config
 
+        print('config_in_agent:',config)
         self.value_optimizer = optimizer_factory(self.value_fn.parameters())
-        self.scheduler = CosineAnnealingLR(self.value_optimizer, self.config['max_steps'])
+        self.value_optimizer = optim.Adam(self.value_fn.parameters(), lr=config.optim_kwargs.learning_rate, eps=config.optim_kwargs.eps)
         self.alpha = config['alpha']
         self.discount = config['discount']
         self.expectile = config['expectile']
@@ -68,10 +69,12 @@ class ICVFAgent(nn.Module):
         self.value_optimizer.zero_grad()
         value_loss.backward()
         self.value_optimizer.step()
-        self.scheduler.step()
 
         # Update target networks
         self.update_target_network()
+        
+        def masked_mean(x, mask):
+            return (x * mask).sum() / (1e-5 + mask.sum())
 
         return {
             'value_loss': value_loss.item(),
@@ -87,8 +90,10 @@ class ICVFAgent(nn.Module):
             'reward mean': rewards.mean().item(),
             'mask mean': masks.mean().item(),
             'q_gz max': q1_gz.max().item(),
+            'value_loss1': masked_mean((q1_gz-v1_gz)**2, batch['masks']), # Loss on s \neq s_+
+            'value_loss2': masked_mean((q1_gz-v1_gz)**2, 1.0 - batch['masks']), # Loss on s = s_+
         }
-
+    
     def update_target_network(self):
         with torch.no_grad():
             for target_param, param in zip(self.target_value_fn.parameters(), self.value_fn.parameters()):
@@ -97,19 +102,5 @@ class ICVFAgent(nn.Module):
 def optimizer_factory(params):
     return optim.Adam(params, lr=0.00005, eps=0.0003125)
 
-def create_learner(seed, value_fn, config):
-    torch.manual_seed(seed)
-    value_fn = value_fn().to(DEFAULT_DEVICE)
-    target_value_fn = copy.deepcopy(value_fn).requires_grad_(False).to(DEFAULT_DEVICE)
-    return ICVFAgent(value_fn, target_value_fn, optimizer_factory, config)
-
-def get_default_config():
-    return {
-        'discount': 0.99,
-        'expectile': 0.9,
-        'target_update_rate': 0.005,
-        'no_intent': False,
-        'min_q': True,
-        'alpha': 0.005,
-        'max_steps': 1000,
-    }
+def create_agent(seed, value_fn, config):
+    return ICVFAgent(value_fn, value_fn, optimizer_factory, config)
