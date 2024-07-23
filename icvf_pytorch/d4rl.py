@@ -7,6 +7,7 @@ import time
 
 def make_env(env_name: str):
     env = gym.make(env_name)
+    env = EpisodeMonitor(env)
     return env
 
 def get_dataset(env: gym.Env,

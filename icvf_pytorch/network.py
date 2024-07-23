@@ -2,23 +2,23 @@ from typing import Dict, Sequence
 import torch
 import torch.nn as nn
 
-class LayerNormMLP(nn.Module):
-    def __init__(self, dims: Sequence[int], activation=nn.GELU, activate_final=False):
-        super(LayerNormMLP, self).__init__()
-        layers = []
-        for i in range(len(dims) - 1):
-            layers.append(nn.Linear(dims[i], dims[i+1]))
-            if i + 2 < len(dims) or activate_final:
-                layers.append(activation())
-                layers.append(nn.LayerNorm(dims[i+1]))
-        self.net = nn.Sequential(*layers)
+# class LayerNormMLP(nn.Module):
+#     def __init__(self, dims: Sequence[int], activation=nn.GELU, activate_final=False):
+#         super(LayerNormMLP, self).__init__()
+#         layers = []
+#         for i in range(len(dims) - 1):
+#             layers.append(nn.Linear(dims[i], dims[i+1]))
+#             if i + 2 < len(dims) or activate_final:
+#                 layers.append(activation())
+#                 layers.append(nn.LayerNorm(dims[i+1]))
+#         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
-        return self.net(x)
+#     def forward(self, x):
+#         return self.net(x)
     
 class NormalMLP(nn.Module):
     def __init__(self, hidden_dims, activation=nn.GELU, activate_final=False):
-        super(LayerNormMLP, self).__init__()
+        super(NormalMLP, self).__init__()
         layers = []
         for i in range(len(hidden_dims) - 1):
             layers.append(nn.Linear(hidden_dims[i], hidden_dims[i+1]))
@@ -29,7 +29,7 @@ class NormalMLP(nn.Module):
 class MultilinearVF(nn.Module):
     def __init__(self, input_dim, hidden_dims: Sequence[int], use_layer_norm: bool = False):
         super(MultilinearVF, self).__init__()
-        network_cls = LayerNormMLP if use_layer_norm else NormalMLP
+        network_cls = NormalMLP
         dims = [input_dim] + hidden_dims
         
         self.phi_net = network_cls(dims, activate_final=True)
