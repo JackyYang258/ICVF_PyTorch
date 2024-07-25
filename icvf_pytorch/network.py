@@ -64,3 +64,18 @@ class MultilinearVF(nn.Module):
             'phi_z': phi_z,
             'psi_z': psi_z,
         }
+        
+class Ensemble(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(Ensemble, self).__init__()
+        self.model_1 = MultilinearVF(*args, **kwargs)
+        self.model_2 = MultilinearVF(*args, **kwargs)
+
+    def forward(self, x):
+        return self.model_1(x), self.model_2(x)
+
+    def get_info(self, *args, **kwargs):
+        return self.model_1.get_info(*args, **kwargs), self.model_2.get_info(*args, **kwargs)
+
+    def get_phi(self, *args, **kwargs):
+        return self.model_1.get_phi(*args, **kwargs), self.model_2.get_phi(*args, **kwargs)

@@ -3,6 +3,7 @@ from absl import app, flags
 import numpy as np
 from ml_collections import config_flags
 from icecream import ic
+import torch
 
 import tqdm
 import wandb
@@ -63,7 +64,9 @@ def main(_):
             wandb.log(train_metrics, step=i)
 
         if i % FLAGS.save_interval == 0:
-            pass
+            #save the pytorch model of the agent.value_fn
+            torch.save(agent.value_fn.state_dict(), os.path.join(FLAGS.save_dir, f'phi_{i}.pt'))
+            print(f'Saved model at step {i} to {FLAGS.save_dir}')
             # save the model
             
             # save_dict = dict(

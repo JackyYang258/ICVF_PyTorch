@@ -22,17 +22,20 @@ class ICVFAgent(nn.Module):
         self.expectile = config['expectile']
         self.no_intent = config['no_intent']
         self.min_q = config['min_q']
+        
+        self.update_interval = config['update_interval']
+        self.update_counter = 0
 
     def update(self, batch):
         # Unpack batch
-        obs = batch['observations']
-        next_obs = batch['next_observations']
-        goals = batch['goals']
-        desired_goals = batch['desired_goals']
-        rewards = batch['rewards']
-        masks = batch['masks']
-        desired_rewards = batch['desired_rewards']
-        desired_masks = batch['desired_masks']
+        obs = torch.tensor(batch['observations'], dtype=torch.float32).to(device)
+        next_obs = torch.tensor(batch['next_observations'], dtype=torch.float32).to(device)
+        goals = torch.tensor(batch['goals'], dtype=torch.float32).to(device)
+        desired_goals = torch.tensor(batch['desired_goals'], dtype=torch.float32).to(device)
+        rewards = torch.tensor(batch['rewards'], dtype=torch.float32).to(device)
+        masks = torch.tensor(batch['masks'], dtype=torch.float32).to(device)
+        desired_rewards = torch.tensor(batch['desired_rewards'], dtype=torch.float32).to(device)
+        desired_masks = torch.tensor(batch['desired_masks'], dtype=torch.float32).to(device)
 
         if self.no_intent:
             desired_goals = torch.ones_like(desired_goals)
@@ -71,7 +74,9 @@ class ICVFAgent(nn.Module):
         self.value_optimizer.step()
 
         # Update target networks
-        self.update_target_network()
+        self.update_counter += 1
+        if self.update_counter % self.update_interval == 0:
+            self.update_target_network()
         
         def masked_mean(x, mask):
             return (x * mask).sum() / (1e-5 + mask.sum())
@@ -94,10 +99,13 @@ class ICVFAgent(nn.Module):
             'value_loss2': masked_mean((q1_gz-v1_gz)**2, 1.0 - batch['masks']), # Loss on s = s_+
         }
     
-    def update_target_network(self):
+    def update_target_network(self, soft_update = True):
         with torch.no_grad():
-            for target_param, param in zip(self.target_value_fn.parameters(), self.value_fn.parameters()):
-                target_param.data.copy_(self.alpha * param.data + (1.0 - self.alpha) * target_param.data)
+            if soft_update:
+                for target_param, param in zip(self.target_value_fn.parameters(), self.value_fn.parameters()):
+                    target_param.data.copy_(self.alpha * param.data + (1.0 - self.alpha) * target_param.data)
+            else:
+                self.target_value_fn.load_state_dict(self.value_fn.state_dict())
 
 def optimizer_factory(params):
     return optim.Adam(params, lr=0.00005, eps=0.0003125)
