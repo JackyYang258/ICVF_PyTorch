@@ -1,3 +1,14 @@
+import datetime
+def time():
+    # Get the current time
+    current_time = datetime.datetime.now()
+
+    # Format the current time
+    formatted_time = current_time.strftime("%H:%M:%S")
+
+    # Print the formatted time
+    print("Current Time:", formatted_time)
+time()
 import os
 from absl import app, flags
 import numpy as np
@@ -8,12 +19,14 @@ import torch
 import tqdm
 import wandb
 
-from .network import MultilinearVF
-from .utils import set_seed
-from .d4rl import make_env, get_dataset
-from .dataset import Dataset
-from .icvf_agent import create_agent
-from .wandb import setup_wandb
+import sys
+sys.path.append('/scratch/bdaw/kaiyan289/icvf_pytorch/icvf_pytorch')
+from network import MultilinearVF
+from utils import set_seed
+from d4rl_utils import make_env, get_dataset
+from dataset import Dataset
+from icvf_agent import create_agent
+from wandb_utils import setup_wandb
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
@@ -26,7 +39,8 @@ flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(10), 'Number of training steps.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
 
-from .config import wandb_config, config, gcdataset_config
+from icvf_config import wandb_config, config, gcdataset_config
+
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
@@ -36,7 +50,8 @@ def main(_):
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
     
-    FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
+    print(wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
+    FLAGS.save_dir = os.path.join(FLAGS.save_dir, FLAGS.env_name)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
     
     env = make_env(FLAGS.env_name)

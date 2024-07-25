@@ -69,7 +69,7 @@ config = update_dict(
     # })
     {
     'discount': 0.99, 
-     'optim_kwargs': { # Standard Adam parameters for non-vision
+    'optim_kwargs': { # Standard Adam parameters for non-vision
             'learning_rate': 3e-4,
             'eps': 1e-8
         }

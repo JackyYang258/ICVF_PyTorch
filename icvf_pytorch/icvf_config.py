@@ -3,7 +3,7 @@ from ml_collections.config_dict import FieldReference
 
 def default_wandb_config():
     config = ml_collections.ConfigDict()
-    config.offline = False  # Syncs online or not?
+    config.offline = True  # Syncs online or not?
     config.project = "jaxrl_m"  # WandB Project Name
     config.entity = FieldReference(None, field_type=str)  # Which entity to log as (default: your own user)
 
@@ -19,13 +19,15 @@ def default_wandb_config():
     config.random_delay = 0  # Random delay for wandb.init (in seconds)
     return config
 
-wandb_config = default_wandb_config().update(
+default_wandb_config().update(
     {
         'project': 'icvf',
         'group': 'icvf',
         # 'name': '{icvf_type}_{env_name}',
         'name': 'antmaze-large-diverse-v2',
     })
+
+wandb_config = default_wandb_config()
 
 config = ml_collections.ConfigDict({
         'optim_kwargs': {
