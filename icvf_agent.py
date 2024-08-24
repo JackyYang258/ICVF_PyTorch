@@ -14,16 +14,15 @@ class ICVFAgent(nn.Module):
         self.target_value_fn = deepcopy(value_fn).requires_grad_(False).to(device)
         self.config = config
 
-        print('config_in_agent:',config)
-        self.value_optimizer = optimizer_factory(self.value_fn.parameters())
+        self.value_optimizer = optimizer_factory(self.value_fn.parameters()) 
         self.value_optimizer = optim.Adam(self.value_fn.parameters(), lr=config.optim_kwargs.learning_rate, eps=config.optim_kwargs.eps)
-        self.alpha = config['alpha']
         self.discount = config['discount']
         self.expectile = config['expectile']
         self.no_intent = config['no_intent']
         self.min_q = config['min_q']
+        self.target_update_rate = config['target_update_rate']
         
-        self.update_interval = config['update_interval']
+        self.update_interval = 1
         self.update_counter = 0
 
     def update(self, batch):
@@ -79,7 +78,9 @@ class ICVFAgent(nn.Module):
             self.update_target_network()
         
         def masked_mean(x, mask):
-            return (x * mask).sum() / (1e-5 + mask.sum())
+            mask = torch.tensor(mask, device=x.device, dtype=x.dtype)
+            result = (x * mask).sum() / (1e-5 + mask.sum())
+            return result.item()
 
         return {
             'value_loss': value_loss.item(),
@@ -103,7 +104,7 @@ class ICVFAgent(nn.Module):
         with torch.no_grad():
             if soft_update:
                 for target_param, param in zip(self.target_value_fn.parameters(), self.value_fn.parameters()):
-                    target_param.data.copy_(self.alpha * param.data + (1.0 - self.alpha) * target_param.data)
+                    target_param.data.copy_(self.target_update_rate * param.data + (1.0 - self.target_update_rate) * target_param.data)
             else:
                 self.target_value_fn.load_state_dict(self.value_fn.state_dict())
 
@@ -111,4 +112,4 @@ def optimizer_factory(params):
     return optim.Adam(params, lr=0.00005, eps=0.0003125)
 
 def create_agent(seed, value_fn, config):
-    return ICVFAgent(value_fn, value_fn, optimizer_factory, config)
+    return ICVFAgent(value_fn, optimizer_factory, config)

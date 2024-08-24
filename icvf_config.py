@@ -3,8 +3,8 @@ from ml_collections.config_dict import FieldReference
 
 def default_wandb_config():
     config = ml_collections.ConfigDict()
-    config.offline = True  # Syncs online or not?
-    config.project = "jaxrl_m"  # WandB Project Name
+    config.offline = False  # Syncs online or not?
+    config.project = "icvf_pytorch"  # WandB Project Name
     config.entity = FieldReference(None, field_type=str)  # Which entity to log as (default: your own user)
 
     group_name = FieldReference(None, field_type=str)  # Group name
@@ -17,15 +17,16 @@ def default_wandb_config():
 
     config.unique_identifier = ""  # Unique identifier for run (will be automatically generated unless provided)
     config.random_delay = 0  # Random delay for wandb.init (in seconds)
-    return config
-
-default_wandb_config().update(
+    config().update(
     {
-        'project': 'icvf',
+        'project': 'icvf_pytorch',
         'group': 'icvf',
         # 'name': '{icvf_type}_{env_name}',
-        'name': 'antmaze-large-diverse-v2',
+        'name': 'maze2d-open-dense-v0',
     })
+    return config
+
+
 
 wandb_config = default_wandb_config()
 

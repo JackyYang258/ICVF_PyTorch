@@ -153,7 +153,8 @@ class GCSDataset:
 
         goal_indx = np.clip(goal_indx + self.curr_goal_shift, 0, self.dataset.size - 1)
         desired_goal_indx = np.clip(desired_goal_indx + self.curr_goal_shift, 0, self.dataset.size - 1)
-        batch['goals'] = {k: v[goal_indx] for k, v in self.dataset['observations'].items()}
-        batch['desired_goals'] = {k: v[desired_goal_indx] for k, v in self.dataset['observations'].items()}
+        batch['goals'] = self.dataset['observations'][goal_indx]
+        batch['desired_goals'] = self.dataset['observations'][desired_goal_indx]
+
 
         return batch

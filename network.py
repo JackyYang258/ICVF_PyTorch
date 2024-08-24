@@ -25,16 +25,19 @@ class NormalMLP(nn.Module):
             if i + 1 < len(hidden_dims) or activate_final:
                 layers.append(activation())
         self.net = nn.Sequential(*layers)
+        
+    def forward(self, x):
+        return self.net(x) 
 
 class MultilinearVF(nn.Module):
     def __init__(self, input_dim, hidden_dims: Sequence[int], use_layer_norm: bool = False):
         super(MultilinearVF, self).__init__()
         network_cls = NormalMLP
         dims = [input_dim] + hidden_dims
-        
+        T_dims = [hidden_dims[-1]] + hidden_dims
         self.phi_net = network_cls(dims, activate_final=True)
         self.psi_net = network_cls(dims, activate_final=True)
-        self.T_net = network_cls(dims, activate_final=True)
+        self.T_net = network_cls(T_dims, activate_final=True)
 
         self.matrix_a = nn.Linear(dims[-1], dims[-1])
         self.matrix_b = nn.Linear(dims[-1], dims[-1])
@@ -71,8 +74,8 @@ class Ensemble(nn.Module):
         self.model_1 = MultilinearVF(*args, **kwargs)
         self.model_2 = MultilinearVF(*args, **kwargs)
 
-    def forward(self, x):
-        return self.model_1(x), self.model_2(x)
+    def forward(self, *args, **kwargs):
+        return self.model_1(*args, **kwargs), self.model_2(*args, **kwargs)
 
     def get_info(self, *args, **kwargs):
         return self.model_1.get_info(*args, **kwargs), self.model_2.get_info(*args, **kwargs)
