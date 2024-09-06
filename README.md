@@ -6,7 +6,7 @@ The official release of the code is [icvf_release](https://github.com/dibyaghosh
 
 ## Installation
 
-Add this directory to your PYTHONPATH. Install the dependencies for basic Pytorch, and additional dependencies depending on which environments you want to try (see requirements.txt).
+Add this directory to your PYTHONPATH. Install the dependencies for basic Pytorch and [D4RL](https://github.com/Farama-Foundation/D4RL), and additional dependencies depending on which environments you want to try.
 
 
 
