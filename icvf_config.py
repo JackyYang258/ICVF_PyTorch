@@ -17,13 +17,13 @@ def default_wandb_config():
 
     config.unique_identifier = ""  # Unique identifier for run (will be automatically generated unless provided)
     config.random_delay = 0  # Random delay for wandb.init (in seconds)
-    config().update(
+    config.update(
     {
         'project': 'icvf_pytorch',
-        'group': 'icvf',
-        # 'name': '{icvf_type}_{env_name}',
-        'name': 'maze2d-open-dense-v0',
+        'entity': 'team_siqi',
+        'name': 'ICVF_PyTorch',
     })
+    
     return config
 
 

@@ -2,6 +2,7 @@ import d4rl
 import gym
 import numpy as np
 from dataset import Dataset
+import pickle
 
 import time
 
@@ -11,34 +12,44 @@ def make_env(env_name: str):
     return env
 
 def get_dataset(env: gym.Env,
-                 clip_to_eps: bool = True,
-                 eps: float = 1e-5):
+                clip_to_eps: bool = True,
+                eps: float = 1e-5,
+                max_size: int = None):
+    if 'Humanoid' in env.spec.id:
+        # file_path = "/home/kaiyan3/siqi/IntentDICE/multiple_expert_trajectory/Humanoid-v2.pkl"
+        file_path = "/home/kaiyan3/siqi/IntentDICE/random_dataset.pkl"
+        with open(file_path, 'rb') as f:
+            dataset = pickle.load(f)
+    else:
         dataset = d4rl.qlearning_dataset(env)
+    
+    if max_size is not None and len(dataset['observations']) > max_size:
+        dataset = {k: v[:max_size] for k, v in dataset.items()}
 
-        if clip_to_eps:
-            lim = 1 - eps
-            dataset['actions'] = np.clip(dataset['actions'], -lim, lim)
+    if clip_to_eps:
+        lim = 1 - eps
+        dataset['actions'] = np.clip(dataset['actions'], -lim, lim)
 
-        dones_float = np.zeros_like(dataset['rewards'])
+    dones_float = np.zeros_like(dataset['rewards'])
+    if 'terminals' not in dataset:
+        dataset['terminals'] = dataset['dones']
+    for i in range(len(dones_float) - 1):
+        if (np.linalg.norm(dataset['observations'][i + 1] - dataset['next_observations'][i]) > 1e-6) or dataset['terminals'][i] == 1.0:
+            dones_float[i] = 1
+        else:
+            dones_float[i] = 0
 
-        for i in range(len(dones_float) - 1):
-            if np.linalg.norm(dataset['observations'][i + 1] -
-                              dataset['next_observations'][i]
-                              ) > 1e-6 or dataset['terminals'][i] == 1.0:
-                dones_float[i] = 1
-            else:
-                dones_float[i] = 0
+    dones_float[-1] = 1
 
-        dones_float[-1] = 1
-
-        return Dataset.create(observations=dataset['observations'].astype(np.float32),
-                        actions=dataset['actions'].astype(np.float32),
-                        rewards=dataset['rewards'].astype(np.float32),
-                        masks=1.0 - dataset['terminals'].astype(np.float32),
-                        dones_float=dones_float.astype(np.float32),
-                        next_observations=dataset['next_observations'].astype(
-                            np.float32),
-                        )
+    return Dataset.create(
+        observations=dataset['observations'].astype(np.float32),
+        actions=dataset['actions'].astype(np.float32),
+        rewards=dataset['rewards'].astype(np.float32),
+        masks=1.0 - dataset['terminals'].astype(np.float32),
+        dones_float=dones_float.astype(np.float32),
+        next_observations=dataset['next_observations'].astype(np.float32)
+    )
+    
 
 class EpisodeMonitor(gym.ActionWrapper):
     """A class that computes episode returns and lengths."""

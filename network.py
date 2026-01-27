@@ -39,6 +39,9 @@ class MultilinearVF(nn.Module):
         self.psi_net = network_cls(dims, activate_final=True)
         self.T_net = network_cls(T_dims, activate_final=True)
 
+        #print(self.T_net.net)
+        #exit(0)
+
         self.matrix_a = nn.Linear(dims[-1], dims[-1])
         self.matrix_b = nn.Linear(dims[-1], dims[-1])
 

@@ -15,11 +15,13 @@ import numpy as np
 from ml_collections import config_flags
 from icecream import ic
 import torch
-
+import pickle
 import tqdm
 import wandb
-
+from dataset import Dataset
 import sys
+import gymnasium as gym
+import shimmy
 sys.path.append('/scratch/bdaw/kaiyan289/icvf_pytorch')
 from network import Ensemble
 from utils import set_seed
@@ -27,18 +29,18 @@ from d4rl_utils import make_env, get_dataset
 from dataset import GCSDataset
 from icvf_agent import create_agent
 from wandb_utils import setup_wandb
+import minari
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'ant-medium-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'mujoco/humanoid/expert-v0', 'Environment name.')
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 100, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(4e5), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(2e5), 'Number of training steps.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
-flags.DEFINE_integer('max_size', int(1e9), 'Max size of dataset to use.')
 
 from icvf_config import wandb_config, config, gcdataset_config
 
@@ -46,7 +48,7 @@ config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
-device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
 
 def main(_):
     # Create wandb logger
@@ -57,10 +59,81 @@ def main(_):
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, FLAGS.env_name)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
     
-    env = make_env(FLAGS.env_name)
-    dataset = get_dataset(env, max_size=FLAGS.max_size)
+    if 'dm_control' in FLAGS.env_name:
+        env = gym.make(FLAGS.env_name)
+        env = gym.wrappers.FlattenObservation(env)
+        path_name = FLAGS.env_name.split("/")[1]
+        file_path = "/home/kaiyan3/siqi/IntentDICE/multiple_expert_trajectory/" + path_name + ".pkl"
+        with open(file_path, 'rb') as f:
+            dataset = pickle.load(f)
+
+        
+    else:
+        dataset = minari.load_dataset('mujoco/humanoid/expert-v0')
+        env = dataset.recover_environment()
+        obs_list, act_list, next_list, rew_list, done_list = [], [], [], [], []
+
+        for episode in dataset.iterate_episodes():
+            obs = episode.observations          # (T+1, obs_dim)
+            act = episode.actions               # (T, act_dim)
+            rew = episode.rewards               # (T,)
+            done = np.logical_or(
+                episode.terminations,
+                episode.truncations
+            ).astype(bool)                      # (T,)
+
+            # ---- 正确对齐所有字段，使它们长度 = T ----
+            obs_t      = obs[:-1]               # (T, obs_dim)
+            next_obs_t = obs[1:]                # (T, obs_dim)
+            act_t      = act                    # (T, act_dim)
+            rew_t      = rew.reshape(-1, 1)     # (T, 1)
+            done_t     = done.astype(np.float32).reshape(-1)  # (T,)
+
+            # ---- Append ----
+            obs_list.append(obs_t)
+            next_list.append(next_obs_t)
+            act_list.append(act_t)
+            rew_list.append(rew_t)
+            done_list.append(done_t)
+
+        # ---- 拼接成最终的 dataset ----
+        dataset = {}
+        dataset['observations']      = np.concatenate(obs_list, axis=0).astype(np.float32)
+        dataset['actions']           = np.concatenate(act_list, axis=0).astype(np.float32)
+        dataset['next_observations'] = np.concatenate(next_list, axis=0).astype(np.float32)
+        #rewards (n,)
+        dataset['rewards']           = np.concatenate(rew_list, axis=0).astype(np.float32).reshape(-1)
+        #terminals(n,1)
+        dataset['terminals']         = np.concatenate(done_list, axis=0).astype(np.float32).reshape(-1)
+
+        print(dataset['terminals'].shape)
+        print(dataset['observations'].shape)
+        print(dataset['actions'].shape)
+        print(dataset['next_observations'].shape)
+        print(dataset['rewards'].shape)
+        
+    dones_float = np.zeros_like(dataset['rewards'])
+
+    for i in range(len(dones_float) - 1):
+        if np.linalg.norm(dataset['observations'][i + 1] -
+                            dataset['next_observations'][i]
+                            ) > 1e-6 or dataset['terminals'][i] == 1.0:
+            dones_float[i] = 1
+        else:
+            dones_float[i] = 0
+
+    dones_float[-1] = 1
+    dataset = Dataset.create(observations=dataset['observations'].astype(np.float32),
+                    actions=dataset['actions'].astype(np.float32),
+                    rewards=dataset['rewards'].astype(np.float32),
+                    masks=1.0 - dataset['terminals'].astype(np.float32),
+                    dones_float=dones_float.astype(np.float32),
+                    next_observations=dataset['next_observations'].astype(
+                        np.float32),
+                    )
+    
     #dataset: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
-    set_seed(FLAGS.seed, env=env)
+    set_seed(FLAGS.seed)
     
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     state_dim = env.observation_space.shape[0]
