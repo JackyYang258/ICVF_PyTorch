@@ -13,14 +13,12 @@ import os
 from absl import app, flags
 import numpy as np
 from ml_collections import config_flags
-from icecream import ic
 import torch
 
-import tqdm
 import wandb
 
 import sys
-sys.path.append('/scratch/bdaw/kaiyan289/icvf_pytorch')
+# sys.path.append('your_path/ICVF_PyTorch')  # replace 'your_path' with the actual path to ICVF_PyTorch
 from network import Ensemble
 from utils import set_seed
 from d4rl_utils import make_env, get_dataset
@@ -29,7 +27,7 @@ from icvf_agent import create_agent
 from wandb_utils import setup_wandb
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'ant-medium-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'hopper-medium-v2', 'Environment name.')
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 100, 'Metric logging interval.')
@@ -46,7 +44,7 @@ config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
 config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
-device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main(_):
     # Create wandb logger
@@ -59,7 +57,7 @@ def main(_):
     
     env = make_env(FLAGS.env_name)
     dataset = get_dataset(env, max_size=FLAGS.max_size)
-    #dataset: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
+    #The format of dataset should be: observations, actions, rewards, masks:1-terminals, dones_float:next_obs != obs[i+1] or terminal, next_observations
     set_seed(FLAGS.seed, env=env)
     
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())

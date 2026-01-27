@@ -15,13 +15,8 @@ def get_dataset(env: gym.Env,
                 clip_to_eps: bool = True,
                 eps: float = 1e-5,
                 max_size: int = None):
-    if 'Humanoid' in env.spec.id:
-        # file_path = "/home/kaiyan3/siqi/IntentDICE/multiple_expert_trajectory/Humanoid-v2.pkl"
-        file_path = "/home/kaiyan3/siqi/IntentDICE/random_dataset.pkl"
-        with open(file_path, 'rb') as f:
-            dataset = pickle.load(f)
-    else:
-        dataset = d4rl.qlearning_dataset(env)
+    
+    dataset = d4rl.qlearning_dataset(env)
     
     if max_size is not None and len(dataset['observations']) > max_size:
         dataset = {k: v[:max_size] for k, v in dataset.items()}
